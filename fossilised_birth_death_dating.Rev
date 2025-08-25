@@ -1,0 +1,144 @@
+###get the taxa and sampling times###
+#####################################
+
+taxa <- readTaxonData()
+n_taxa <- taxa.size()
+
+###get the data###
+##################
+
+molecular <- readDiscreteCharacterData()
+morphological <- readDiscreteCharacterData()
+
+molecular.addMissingTaxa(taxa)
+morphological.addMissingTaxa(taxa)
+
+###get the start tree###
+########################
+
+start_tree <- readTrees()
+root_age <- start_tree[1].rootAge()
+source()
+
+###initiate moves and monitors vector###
+########################################
+
+mvi = 0
+mni = 0
+
+###transition matrices for molecular and morphological data###
+##############################################################
+
+Q_molecular := fnJC(4)
+Q_morphological := fnJC(2)
+
+###fbdp model parameters###
+###########################
+
+speciation_rate ~ dnExponential(1)
+moves[++mvi] = mvScale(speciation_rate,lambda=1,tune=true,weight=3.0)
+moves[++mvi] = mvScale(speciation_rate,lambda=0.1,tune=true,weight=3.0)
+moves[++mvi] = mvScale(speciation_rate,lambda=0.01,tune=true,weight=3.0)
+
+extinction_rate ~ dnExponential(1)
+moves[++mvi] = mvScale(extinction_rate,lambda=1,tune=true,weight=3.0)
+moves[++mvi] = mvScale(extinction_rate,lambda=0.1,tune=true,weight=3.0)
+moves[++mvi] = mvScale(extinction_rate,lambda=0.01,tune=true,weight=3.0)
+
+psi ~ dnExponential(100) 
+moves[++mvi] = mvScale(psi,lambda=1,tune=true,weight=3.0)
+moves[++mvi] = mvScale(psi,lambda=0.1,tune=true,weight=3.0)
+moves[++mvi] = mvScale(psi,lambda=0.01,tune=true,weight=3.0)
+
+origin_time ~ dnExponential(0.1, offset=oldest_fossil)
+moves[++mvi] = mvSlide(origin_time, delta=0.01, tune=true, weight=5.0)
+moves[++mvi] = mvSlide(origin_time, delta=0.1, tune=true, weight=5.0)
+moves[++mvi] = mvSlide(origin_time, delta=1, tune=true, weight=5.0)
+
+fbd_tree ~ dnBDSTP(r=0, origin=origin_time, lambda=speciation_rate, mu=extinction_rate, psi=psi, rho=1, taxa=taxa)
+#fbd_tree.setValue(start_tree[1])
+moves[++mvi] = mvFNPR(fbd_tree, weight=20.0)
+moves[++mvi] = mvCollapseExpandFossilBranch(fbd_tree, origin_time, weight=10.0)
+moves[++mvi] = mvNodeTimeSlideUniform(fbd_tree, weight=20.0)
+moves[++mvi] = mvRootTimeSlideUniform(fbd_tree, origin_time, weight=5.0)
+
+###get the fossil ages###
+#########################
+
+fossils = fbd_tree.getFossils()
+for (i in 1:fossils.size()){
+t[i] := tmrca(fbd_tree, clade(fossils[i]))
+
+a_i = fossils[i].getMinAge()-0.01
+b_i = fossils[i].getMaxAge()+0.01
+
+F[i] ~ dnUniform(t[i] - b_i, t[i] - a_i)
+F[i].clamp( 0 )
+}
+
+moves[++mvi] = mvFossilTimeSlideUniform(fbd_tree, origin_time, tune=true, weight=5.0)
+
+###now do the ucln###
+#####################
+
+n_branches <- 2 * n_taxa - 2
+
+#clock_mean <- 0.0075
+clock_mean ~ dnUniform(0.00001, 0.1)
+moves[++mvi] = mvScale(clock_mean,lambda=1,tune=true,weight=3.0)
+moves[++mvi] = mvScale(clock_mean,lambda=0.1,tune=true,weight=3.0)
+moves[++mvi] = mvScale(clock_mean,lambda=0.01,tune=true,weight=3.0)
+
+#clock_stdv <- 0.2937025
+clock_stdv ~ dnExponential(1/(0.587405/2))
+moves[++mvi] = mvScale(clock_stdv,lambda=1,tune=true,weight=3.0)
+moves[++mvi] = mvScale(clock_stdv,lambda=0.1,tune=true,weight=3.0)
+moves[++mvi] = mvScale(clock_stdv,lambda=0.01,tune=true,weight=3.0)
+
+for(i in 1:n_branches){
+branch_rates[i] ~ dnLnorm(ln(clock_mean) - ((clock_stdv^2)/2), clock_stdv)
+moves[++mvi] = mvScale(branch_rates[i], lambda = 1, weight=2.0, tune=true)
+}
+moves[++mvi] = mvVectorScale(branch_rates,lambda=1.0,weight=2.0, tune=true) 
+moves[++mvi] = mvVectorSingleElementScale(branch_rates,lambda=30.0,weight=1.0, tune=true)
+
+phySeq ~ dnPhyloCTMC(tree=fbd_tree, Q=Q_molecular, branchRates=branch_rates, type="DNA")
+phySeq.clamp(molecular)
+
+###morpho clock specification###
+################################
+
+clock_morpho ~ dnUniform(0.00001, 1)
+moves[++mvi] = mvScale(clock_morpho,lambda=1,tune=true,weight=3.0)
+moves[++mvi] = mvScale(clock_morpho,lambda=0.1,tune=true,weight=3.0)
+moves[++mvi] = mvScale(clock_morpho,lambda=0.01,tune=true,weight=3.0)
+
+phyMorpho ~ dnPhyloCTMC(tree=fbd_tree, branchRates=clock_morpho, Q=Q_morphological, type="Standard")
+phyMorpho.clamp(morphological)
+
+###bring together model and run mcmc###
+#######################################
+
+mymodel = model(speciation_rate)
+
+monitors[++mni] = mnModel(filename=, printgen=10)
+monitors[++mni] = mnFile(filename=, printgen=10, fbd_tree)
+monitors[++mni] = mnScreen(printgen=5, origin_time)
+mymcmc = mcmc(mymodel, monitors, moves)
+#mymcmc.burnin(generations=5000, tuningInterval=50)
+mymcmc.run(generations=200000, checkpointFile = , checkpointInterval = 2000, tuningInterval=200)
+q()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
